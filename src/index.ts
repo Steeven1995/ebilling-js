@@ -1,195 +1,314 @@
-import axios, { AxiosError } from 'axios';
 import { encode as base64Encode } from 'base-64';
-require('dotenv').config();
 
-
-const username = process.env.EBILLING_USERNAME;
-const sharedkey = process.env.EBILLING_SHAREDKEY;
-const domain = process.env.EBILLING_DOMAIN;
-
-const credentials = `${username}:${sharedkey}`;
-const encodedCredentials = base64Encode(credentials); // Je Change 'base64.encode' to 'base64Encode'
-
-const requestHeaders = {
-    'Content-type': 'application/json',
-    Accept: 'application/json',
-    Authorization: 'Basic ' + encodedCredentials,
-};
-
-const api = axios.create({
-    baseURL: domain,
-    headers: requestHeaders
-});
-
-// Format de l'objet facture pour la création de la facture
 interface InvoiceData {
-    amount: number;
+    /** 
+     * The MSISDN of the payer (e.g., '077000000' OR '066000000').
+     * Required.
+     */
     payer_msisdn: string;
-    payer_email: string;
+  
+    /** 
+     * The amount of the bill. 
+     * Required. 
+     */
+    amount: number;
+  
+    /** 
+     * The short description of the bill. 
+     * Required. 
+     */
     short_description: string;
-    external_reference: string;
+  
+    /** 
+     * The email of the payer. 
+     * Optional. 
+     */
+    payer_email?: string;
+  
+    /** 
+     * The full description of the bill. 
+     * Optional. 
+     */
     description?: string;
+  
+    /** 
+     * The internal reference of the payment in merchant system 
+     * for debugging and tracing. 
+     * Optional. 
+     */
+    external_reference?: string;
+  
+    /** 
+     * The datetime at which the bill should expire. 
+     * If not specified, the invoice never expires. 
+     * Format example: '2025-12-31T23:59:59Z'.
+     * Optional.
+     */
     expiry_period?: string;
 }
 
+interface CreateInvoiceResponse {
+    client_transaction_id: string | null;
+    server_transaction_id: string;
+    e_bill: {
+      bill_id: string;
+      payer_msisdn: string;
+      payer_email: string | null;
+      payee_id: string;
+      payee_name: string;
+      amount: number;
+      currency: string;
+      state: string;
+      created_at: string; // ISO datetime
+      expire_at: string | null;
+      expiry_period: number;
+      schedule_at: string | null;
+      updated_at: string;
+      short_description: string;
+      due_date: string; // YYYY-MM-DD
+      external_reference: string | null;
+      additional_info: string | null;
+      description: string | null;
+      reason: string | null;
+      payer_name: string | null;
+      payer_address: string | null;
+      payer_city: string | null;
+      accept_partial_payment: boolean;
+      minimum_amount: number | null;
+      amount_paid: number;
+      ps_transaction_id: string | null;
+      payment_system_name: string;
+      payer_id: string | null;
+      payer_code: string | null;
+      data0: string | null;
+      data1: string | null;
+      data2: string | null;
+      data3: string | null;
+      data4: string | null;
+      data5: string | null;
+      data6: string | null;
+      data7: string | null;
+      data8: string | null;
+      data9: string | null;
+    };
+}
+
+interface GetInvoiceResponse {
+    bill_id: string;
+    payer_msisdn: string;
+    payer_email: string | null;
+    payee_id: string;
+    payee_name: string;
+    amount: number;
+    currency: string;
+    state: string;
+    created_at: string; // ISO 8601 datetime
+    expire_at: string | null;
+    expiry_period: number;
+    schedule_at: string | null;
+    updated_at: string;
+    short_description: string;
+    due_date: string; // YYYY-MM-DD
+    external_reference: string | null;
+    additional_info: string | null;
+    description: string | null;
+    reason: string | null;
+    payer_name: string | null;
+    payer_address: string | null;
+    payer_city: string | null;
+    accept_partial_payment: boolean;
+    minimum_amount: number | null;
+    amount_paid: number;
+    ps_transaction_id: string | null;
+    payment_system_name: string;
+    payer_id: string | null;
+    payer_code: string | null;
+    data0: string | null;
+    data1: string | null;
+    data2: string | null;
+    data3: string | null;
+    data4: string | null;
+    data5: string | null;
+    data6: string | null;
+    data7: string | null;
+    data8: string | null;
+    data9: string | null;
+  }
+  
+interface GetAllInvoiceResponse{
+  current_page: number,
+  per_page: number,
+  total_entries: number,
+  entries : GetAllInvoiceResponse[] | []
+}
+
 interface PushUssdData {
-    bill_id  : string,
-    payer_msisdn : string,
-    payment_system_name : string //airtelmoney || moovmoney
+    /** 
+     * The bill ID associated with the invoice. 
+     * Required.
+     */
+    bill_id: string;
+  
+    /** 
+     * The MSISDN (phone number) of the payee. 
+     * Required. 
+     */
+    payer_msisdn: string;
+  
+    /** 
+     * The username of the payment system which will process the payouts. 
+     * Must be either 'airtelmoney' or 'moovmoney4'. 
+     * Required.
+     */
+    payment_system_name: 'airtelmoney' | 'moovmoney4';
 }
 
-interface PayoutRequireData{
-    payee_msisdn : string,
-    amount : string,
-    external_reference : string,
-    payout_type : string,
-}
+type Environment = 'lab' | 'production';
 
-interface PropertyName{
-    payment_system_name : string,
-    payer_pin : string,
-    payer_client_id : string,
-    payer_client_secret_key : string,
-    payouts : PayoutRequireData
-}
+export class EbillingJS {
 
+  private headers: HeadersInit;
+  portalBaseUrl: string;
+  apiBaseUrl: string;
 
-export async function CreateInvoice(data: InvoiceData){
+  constructor(env: Environment = 'lab', username?: string, sharedkey?: string, domain?: string) {
 
-   try{
-        {/**
-            HTTP/1.1 200 OK RETURN RESPONSE DATA
-
-            {
-                "client_transaction_id":"001",
-                "server_transaction_id":"0000000000001",
-                "e_bill":{
-                "bill_id":"5550000001",
-                "payer_msisdn":"4362752893",
-                "payer_email":"leola.bernier@haneconn.com",
-                "payee_id":"9016529699",
-                "payee_name":"merchant",
-                "amount":100,
-                "currency":"XAF",
-                "state":"ready",
-                "created_at":"2013-12-29T18:03:10.009+08:00",
-                "expire_at":"2013-07-25T01:51:29.000+08:00",
-                "schedule_at":null,
-                "updated_at":"2013-12-29T18:03:10.009+08:00",
-                "short_description":"short_description",
-                "due_date":"2013-10-31",
-                "external_reference":null,
-                "additional_info":null,
-                "description":"description",
-                "reason":null,
-                "accept_partial_payment": false,
-                "minimum_amount": 0
-            }
-        */}
-
-        const { payer_msisdn, amount, short_description, payer_email, description, external_reference, expiry_period } = data;
-
-        const response = await api.post('/merchant/e_bills.json', {
-            payer_msisdn,
-            amount,
-            short_description,
-            payer_email,
-            description,
-            external_reference,
-            expiry_period,
-        });
-
-        return response.data
-
-   }catch(error){
-    if (error instanceof AxiosError) {
-        console.error('Erreur lors de la création de la facture :', error.response?.data);
-        throw error.response?.data;
-    } else {
-        console.error('Erreur inattendue :', error);
-        throw error;
+    if (!username || !sharedkey || !domain) {
+        throw new Error('Missing required parameters: username, sharedkey, or domain');
     }
-   }
 
-}
+    const user = username || process.env.EBILLING_USERNAME || '';
+    const key = sharedkey || process.env.EBILLING_SHAREDKEY || '';
 
-export async function MakePushUSSD(data : PushUssdData ){
+    this.portalBaseUrl =
+    env === 'lab'
+      ? 'https://test.billing-easy.net'
+      : 'https://staging.billing-easy.net';
+    
+    this.apiBaseUrl = env === 'lab'
+      ? 'https://lab.billing-easy.net/api/v1/'
+      : 'https://stg.billing-easy.com/api/v1';
+
+    const credentials = `${user}:${key}`;
+    const encodedCredentials = base64Encode(credentials);
+
+    this.headers = {
+      'Content-Type': 'application/json',
+      Accept: 'application/json',
+      Authorization: `Basic ${encodedCredentials}`,
+    };
+
+  }
+
+  private async request<T>(path: string, options: RequestInit): Promise<T> {
 
     try {
-        const { payer_msisdn, bill_id, payment_system_name } = data;
-        const response = await api.post(`/merchant/e_bills/${bill_id}/ussd_push`, { payer_msisdn, payment_system_name });
-        return response.data;
+      const response = await fetch(`${this.portalBaseUrl}${path}`, {
+        ...options,
+        headers: {
+          ...this.headers,
+          ...(options.headers || {}),
+        },
+      });
+
+      const json = await response.json();
+
+      if (!response.ok) {
+        throw json;
+      }
+
+      return json;
+
     } catch (error) {
-        if (error instanceof AxiosError) {
-            console.error("Erreur lors de l'envoie du push ussd", error.response?.data);
-            throw error.response?.data;
-        } else {
-            console.error('Erreur inattendue :', error);
-            throw error;
-        }
+      console.error('Request error:', error);
+      throw error;
     }
+  }
+
+
+/**
+ * Crée une facture (invoice) dans le système Ebilling.
+ * 
+ * @param data - Données nécessaires à la création de la facture, comme le montant, la description, etc.
+ * @returns Une promesse contenant les détails de la facture créée.
+ */
+  async createInvoice(data: InvoiceData): Promise<CreateInvoiceResponse> {
+    return this.request('/merchant/e_bills.json', {
+      method: 'POST',
+      body: JSON.stringify(data),
+    });
+  }
+
+  /**
+ * Récupère les détails d'une facture spécifique en utilisant son identifiant.
+ * 
+ * @param billId - L'identifiant unique de la facture à récupérer.
+ * @returns Une promesse contenant les informations de la facture.
+ */
+  async getInvoice(bill_id: string): Promise<GetInvoiceResponse> {
+    return this.request(`/merchant/e_bills/${bill_id}.json`, {
+      method: 'GET',
+    });
+  }
+
+  /**
+ * Récupère la liste paginée des factures créées.
+ * 
+ * @returns Une promesse contenant la pagination (page actuelle, total d’éléments, etc.) et un tableau des factures.
+ */
+  async getAllInvoices(): Promise<GetAllInvoiceResponse> {
+    return this.request(`merchant/e_bills.json`, {
+      method: 'GET',
+    });
+  }
+
+
+  /**
+ * Envoie un *USSD Push* à un numéro de téléphone mobile pour initier un paiement via mobile money.
+ * 
+ * ⚠️ Cette méthode **ne redirige pas** vers le portail de paiement, elle pousse directement le message au téléphone du client via l'opérateur mobile.
+ * 
+ * Vous devez également configurer une URL de **notification (callback)** dans votre compte Ebilling
+ * pour recevoir l’état final du paiement.
+ * 
+ * @param data - Doit contenir au minimum `payer_msisdn` (numéro du client) et `payment_system_name` ("airtelmoney" ou "moovmoney4").
+ * @returns Une promesse contenant la réponse de l'opérateur.
+ */
+  async makePushUSSD(data: PushUssdData) {
+    return this.request(`/merchant/e_bills/${data.bill_id}/ussd_push`, {
+      method: 'POST',
+      body: JSON.stringify({
+        payer_msisdn: data.payer_msisdn,
+        payment_system_name: data.payment_system_name,
+      }),
+    });
+  }
+
+  /**
+ * Génère l’URL vers le portail de paiement Ebilling pour une facture donnée.
+ * 
+ * Ce portail permet au client de finaliser son paiement via une interface web.
+ * À utiliser si vous souhaitez rediriger l’utilisateur vers une page de paiement hébergée par Ebilling.
+ * 
+ * @param billId - L’identifiant de la facture.
+ * @returns Une URL complète vers le portail de paiement Ebilling.
+ */
+  async getGatewayPortal(
+    bill_id: string,
+    redirect_url: string,
+    eb_callbackurl: string
+  ): Promise<{ url: string; formData: URLSearchParams }> {
+
+    const url = `${this.portalBaseUrl}?invoice=${bill_id}&redirect_url=${encodeURIComponent(redirect_url)}`;
+  
+    const formData = new URLSearchParams();
+    formData.append('invoice_number', bill_id);
+    formData.append('eb_callbackurl', eb_callbackurl);
+  
+    return {
+      url,
+      formData,
+    };
+  }
 
 }
-
-export async function GetInvoice(bill_id : string){
-
-    try {
-        {/** 
-            HTTP/1.1 200 OK RETURN RESPONSE DATA
-
-            {
-                "bill_id":"5550000001",
-                "payer_msisdn":"4362752893",
-                "payer_email":"leola.bernier@haneconn.com",
-                "payee_id":"9016529699",
-                "payee_name":"merchant",
-                "amount":100,
-                "currency":"XAF",
-                "state":"processed",
-                "ps_transaction_id":"MP210817.2353.A90673",
-                "payment_system_name":"airtelmoney",
-                "created_at":"2013-12-29T18:03:10.009+08:00",
-                "expire_at":"2013-07-25T01:51:29.000+08:00",
-                "updated_at":"2013-12-29T18:03:10.009+08:00",
-                "short_description":"short_description",
-                "due_date":"2013-10-31",
-                "external_reference":null,
-                "additional_info":null,
-                "description":"description",
-                "reason":null
-                }
-        */}
-
-        const response = await api.get(`/merchant/e_bills/${bill_id}.json`)
-        return response.data;
-
-    }catch (error) {
-
-        if (error instanceof AxiosError) {
-            console.error('Erreur lors de la recuperation de la facture :', error.response?.data);
-            throw error.response?.data;
-        } else {
-            console.error('Erreur inattendue :', error);
-            throw error;
-        }
-    }
-
-}
-
-export async function CreatePayout(data : PropertyName){
-
-    try {
-        const response = await api.get('/merchant/payouts', { data });
-        return response.data;
-    }catch (error) {
-        if (error instanceof AxiosError) {
-            console.error('Erreur lors de la création du paiement :', error.response?.data);
-            throw error.response?.data;
-        } else {
-            console.error('Erreur inattendue :', error);
-            throw error;
-        }
-    }
-}
-
-
